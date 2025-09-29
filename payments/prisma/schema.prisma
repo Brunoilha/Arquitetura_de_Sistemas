@@ -19,10 +19,11 @@ enum PaymentStatus {
 model Payment {
   id        Int           @id @default(autoincrement())
   orderId   String        @db.Text
-  amount    Decimal       @db.Numeric(10, 2)
+  amount    Decimal       @db.Decimal(10, 2)
   status    PaymentStatus @default(PENDING)
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
   @@index([orderId])
 }
+
