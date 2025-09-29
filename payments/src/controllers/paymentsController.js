@@ -1,4 +1,3 @@
-// payments/src/controllers/paymentsController.js
 const prisma = require("../db/prisma");
 const axiosInstance = require("../utils/axiosInstance"); 
 
@@ -113,16 +112,29 @@ async function processPayment(req, res) {
     });
 
     try {
-      await axiosInstance.patch(`${ORDERS_BASE}/${orderId}/status`, { status: "PAID" });
+      const updateOrderStatusResp = await axiosInstance.patch(`${ORDERS_BASE}/${orderId}/status`, { status: "PAID" });
+      if (updateOrderStatusResp.status !== 200) {
+        throw new Error("Failed to update order status to PAID");
+      }
     } catch (e) {
-      // falhou marcar order como PAID -> rollback pesado
+      // Falha ao atualizar a ordem para PAID -> fazer rollback
       await prisma.payment.update({
         where: { id: Number(id) },
         data: { status: "FAILED" },
       });
+
+      // Restaurar estoque
       for (const u of updated) {
         try { await adjustProductStock(u.pid, +u.qty); } catch {}
       }
+
+      // Atualizar o status da ordem para FAILED
+      try {
+        await axiosInstance.patch(`${ORDERS_BASE}/${orderId}/status`, { status: "FAILED" });
+      } catch (err) {
+        console.error("Failed to mark order as FAILED during rollback", err.message);
+      }
+
       return res.status(500).json({ error: "Could not update order to PAID. Rolled back." });
     }
 
@@ -130,7 +142,7 @@ async function processPayment(req, res) {
     axiosInstance.post(NOTIF_BASE, {
       clientId: order.userId ?? order.clientId ?? order.client_id,
       message: `Your order ${orderId} was paid and confirmed.`,
-    }).catch(() => {});
+    }).catch(() => {}); // Não falha se notificação falhar.
 
     return res.json({ success: true, payment: processed });
   } catch (error) {
