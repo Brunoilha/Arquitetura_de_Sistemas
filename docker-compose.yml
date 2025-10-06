@@ -14,7 +14,7 @@ services:
       - products_pgdata:/var/lib/postgresql/data
     networks: [ app-net ]
     ports:
-      - "5433:5432"  # opcional expor no host
+      - "5433:5432"
 
   postgres-payments:
     image: postgres:15
@@ -64,13 +64,17 @@ services:
     container_name: products_service
     restart: always
     environment:
-      # Prisma datasource
       DATABASE_URL: postgresql://products_user:prod_s3cret_!A9@postgres-products:5432/products_db?schema=public
     depends_on: [ postgres-products ]
     networks: [ app-net ]
     ports:
       - "3001:3001"
-    command: sh -c "npx prisma migrate deploy && node src/server.js"
+    command: >
+      sh -c "
+        npx prisma generate &&
+        npx prisma db push &&
+        node src/server.js
+      "
 
   orders:
     build: ./orders
@@ -83,6 +87,10 @@ services:
     networks: [ app-net ]
     ports:
       - "3002:3002"
+    command: >
+      sh -c "
+        node src/server.js
+      "
 
   payments:
     build: ./payments
@@ -91,7 +99,6 @@ services:
     environment:
       DATABASE_URL: postgresql://payments_user:paym_s3cret_!B7@postgres-payments:5432/payments_db?schema=public
       PAYMENT_SUCCESS_PROB: "0.7"
-      # (opcional) sobrescrever bases via env
       ORDERS_BASE_URL: http://orders:3002/order-service/v1/orders
       PRODUCTS_BASE_URL: http://products:3001/product-service/v1/products
       NOTIF_BASE_URL: http://notification:3005/notification-service/v1/notify
@@ -99,7 +106,12 @@ services:
     networks: [ app-net ]
     ports:
       - "3003:3003"
-    command: sh -c "npx prisma migrate deploy && node src/server.js"
+    command: >
+      sh -c "
+        npx prisma generate &&
+        npx prisma db push &&
+        node src/server.js
+      "
 
   users:
     build: ./users
@@ -111,7 +123,12 @@ services:
     networks: [ app-net ]
     ports:
       - "3004:3004"
-    command: sh -c "npx prisma migrate deploy && node src/server.js"
+    command: >
+      sh -c "
+        npx prisma generate &&
+        npx prisma db push &&
+        node src/server.js
+      "
 
   notification:
     build: ./notification
