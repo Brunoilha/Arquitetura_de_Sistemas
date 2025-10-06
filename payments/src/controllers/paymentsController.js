@@ -1,5 +1,5 @@
 const prisma = require("../db/prisma");
-const axiosInstance = require("../utils/axiosInstance"); 
+const axiosInstance = require("../utils/axiosInstance");
 
 // Bases (com fallback)
 const ORDERS_BASE   = process.env.ORDERS_BASE_URL   || "http://orders:3002/order-service/v1/orders";
@@ -18,20 +18,18 @@ async function processPayment(req, res) {
   try {
     const { id } = req.params;
 
-    // 1) Buscar pagamento
-    const payment = await prisma.payment.findUnique({
-      where: { id: Number(id) },
-    });
+    const payment = await prisma.payment.findUnique({ where: { id: Number(id) } });
     if (!payment) return res.status(404).json({ error: "Payment not found" });
 
-    if (payment.status && payment.status !== "PENDING") {
-      return res
-        .status(400)
-        .json({ error: "Payment already processed or not in PENDING state" });
+    if (payment.status !== "PENDING") {
+      return res.status(400).json({ error: "Payment already processed or not in PENDING state" });
     }
 
-    // 2) Buscar order (orderId é string / ObjectId)
     const orderId = String(payment.orderId);
+    if (!orderId || orderId.trim().length === 0) {
+      return res.status(400).json({ error: "Invalid orderId format" });
+    }
+
     const orderResp = await axiosInstance.get(`${ORDERS_BASE}/${orderId}`);
     const order = orderResp.data;
     if (!order) {
@@ -42,7 +40,6 @@ async function processPayment(req, res) {
       return res.status(404).json({ error: "Related order not found" });
     }
 
-    // 3) Normalizar itens
     const items = Array.isArray(order.products)
       ? order.products
       : (order.productId && order.quantity
@@ -57,92 +54,51 @@ async function processPayment(req, res) {
       return res.status(400).json({ error: "Order has no items" });
     }
 
-    // 4) Verificar e reduzir estoque
     const updated = [];
     try {
       for (const item of items) {
-        const pid = String(item.productId ?? item.product_id ?? item.id);
-        const qty = Number(item.quantity ?? item.qty ?? 1);
+        const pid = String(item.productId ?? item.id);
+        const qty = Number(item.quantity ?? 1);
 
-        // (opcional) conferir produto
         const prod = (await axiosInstance.get(`${PRODUCTS_BASE}/${pid}`)).data;
         if (!prod) throw new Error(`Product ${pid} not found`);
-        if ((prod.stock ?? 0) < qty) {
-          throw new Error(`Insufficient stock for product ${pid}`);
-        }
+        if ((prod.stock ?? 0) < qty) throw new Error(`Insufficient stock for product ${pid}`);
 
-        // reduzir
         await adjustProductStock(pid, -qty);
         updated.push({ pid, qty });
       }
     } catch (e) {
-      // rollback de estoque
       for (const u of updated) {
         try { await adjustProductStock(u.pid, +u.qty); } catch {}
       }
-      await prisma.payment.update({
-        where: { id: Number(id) },
-        data: { status: "FAILED" },
-      });
+      await prisma.payment.update({ where: { id: Number(id) }, data: { status: "FAILED" } });
       try { await axiosInstance.patch(`${ORDERS_BASE}/${orderId}/status`, { status: "CANCELED" }); } catch {}
-      return res.status(400).json({ error: "Insufficient stock or product not found", details: e.message });
+      return res.status(400).json({ error: e.message });
     }
 
-    // 5) Simular gateway
     const successProbability = parseFloat(process.env.PAYMENT_SUCCESS_PROB || "0.7");
     const ok = Math.random() <= successProbability;
 
     if (!ok) {
-      // rollback estoque + cancelar order
       for (const u of updated) {
         try { await adjustProductStock(u.pid, +u.qty); } catch {}
       }
-      await prisma.payment.update({
-        where: { id: Number(id) },
-        data: { status: "FAILED" },
-      });
+      await prisma.payment.update({ where: { id: Number(id) }, data: { status: "FAILED" } });
       try { await axiosInstance.patch(`${ORDERS_BASE}/${orderId}/status`, { status: "CANCELED" }); } catch {}
-      return res.status(402).json({ error: "Payment processing failed (simulated)" });
+      return res.status(402).json({ error: "Payment failed (simulated)" });
     }
 
-    // 6) Sucesso: marcar pagamento como PAID e order como PAID
     const processed = await prisma.payment.update({
       where: { id: Number(id) },
-      data: { status: "PAID" }, // <<<< status válido no seu enum
+      data: { status: "PAID" },
     });
 
-    try {
-      const updateOrderStatusResp = await axiosInstance.patch(`${ORDERS_BASE}/${orderId}/status`, { status: "PAID" });
-      if (updateOrderStatusResp.status !== 200) {
-        throw new Error("Failed to update order status to PAID");
-      }
-    } catch (e) {
-      // Falha ao atualizar a ordem para PAID -> fazer rollback
-      await prisma.payment.update({
-        where: { id: Number(id) },
-        data: { status: "FAILED" },
-      });
+    axiosInstance.patch(`${ORDERS_BASE}/${orderId}/status`, { status: "PAID" });
 
-      // Restaurar estoque
-      for (const u of updated) {
-        try { await adjustProductStock(u.pid, +u.qty); } catch {}
-      }
-
-      // Atualizar o status da ordem para FAILED
-      try {
-        await axiosInstance.patch(`${ORDERS_BASE}/${orderId}/status`, { status: "FAILED" });
-      } catch (err) {
-        console.error("Failed to mark order as FAILED during rollback", err.message);
-      }
-
-      return res.status(500).json({ error: "Could not update order to PAID. Rolled back." });
-    }
-
-    // 7) Notificação (não bloqueia)
-    axiosInstance.post(NOTIF_BASE, {
-      clientId: order.userId ?? order.clientId ?? order.client_id,
-      message: `Your order ${orderId} was paid and confirmed.`,
-    }).catch(() => {}); // Não falha se notificação falhar.
+    // axiosInstance.post(NOTIF_BASE, {
+    //   clientId: order.userId ?? order.clientId,
+    //   message: `Your order ${orderId} was paid and confirmed.`,
+    // }).catch(() => {});
 
     return res.json({ success: true, payment: processed });
   } catch (error) {
@@ -154,13 +110,13 @@ async function processPayment(req, res) {
 // POST /payment-service/v1/payments
 async function createPayment(req, res) {
   try {
-    const { orderId, amount, status } = req.body;
-    if (!orderId || amount == null) {
-      return res.status(400).json({ error: "orderId e amount são obrigatórios" });
+    let { orderId, amount, status } = req.body;
+    if (!orderId || typeof orderId !== "string") {
+      return res.status(400).json({ error: "Invalid orderId format" });
     }
     const p = await prisma.payment.create({
       data: {
-        orderId: String(orderId),     // << string
+        orderId,
         amount: Number(amount),
         status: status || "PENDING",
       },
@@ -171,26 +127,20 @@ async function createPayment(req, res) {
   }
 }
 
-// GET /payment-service/v1/payments?order_id=...
 async function getAllPayments(req, res) {
   try {
     const { order_id } = req.query;
-    let payments;
-    if (order_id) {
-      payments = await prisma.payment.findMany({
-        where: { orderId: String(order_id) },  // << string
-        orderBy: { createdAt: "desc" },
-      });
-    } else {
-      payments = await prisma.payment.findMany({ orderBy: { createdAt: "desc" } });
-    }
+    const where = order_id ? { orderId: order_id } : {};
+    const payments = await prisma.payment.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+    });
     return res.json(payments);
   } catch (err) {
     return res.status(500).json({ error: "Error fetching payments", details: err.message });
   }
 }
 
-// GET /payment-service/v1/payments/:id
 async function getPaymentById(req, res) {
   try {
     const { id } = req.params;
