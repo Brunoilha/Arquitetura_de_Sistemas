@@ -4,7 +4,18 @@ const prisma = require("../db/prisma");
 async function createProduct(req, res) {
   try {
     const { name, price, stock } = req.body;
-    const p = await prisma.product.create({ data: { name, price, stock } });
+
+    // 🔹 Validações
+    if (typeof price !== "number" || price < 0) {
+      return res.status(400).json({ error: "Preço não pode ser negativo" });
+    }
+    if (typeof stock !== "number" || stock < 0) {
+      return res.status(400).json({ error: "Stock não pode ser negativo" });
+    }
+
+    const p = await prisma.product.create({
+      data: { name, price, stock },
+    });
     res.status(201).json(p);
   } catch (e) {
     res.status(500).json({ error: "Error creating product", details: e.message });
@@ -41,6 +52,15 @@ async function updateProduct(req, res) {
   try {
     const { id } = req.params;
     const { name, price, stock } = req.body;
+
+    // 🔹 Validações no update (apenas se os campos forem informados)
+    if (typeof price !== "undefined" && price < 0) {
+      return res.status(400).json({ error: "Preço não pode ser negativo" });
+    }
+    if (typeof stock !== "undefined" && stock < 0) {
+      return res.status(400).json({ error: "Stock não pode ser negativo" });
+    }
+
     const p = await prisma.product.update({
       where: { id: parseInt(id) },
       data: { name, price, stock },
@@ -70,11 +90,16 @@ async function updateProductStock(req, res) {
     if (typeof stockDelta === "undefined") {
       return res.status(400).json({ error: "stockDelta is required" });
     }
-    const current = await prisma.product.findUnique({ where: { id: parseInt(id) } });
+
+    const current = await prisma.product.findUnique({
+      where: { id: parseInt(id) },
+    });
     if (!current) return res.status(404).json({ error: "Product not found" });
 
     const newStock = (current.stock || 0) + Number(stockDelta);
-    if (newStock < 0) return res.status(400).json({ error: "Insufficient stock" });
+    if (newStock < 0) {
+      return res.status(400).json({ error: "Insufficient stock" });
+    }
 
     const p = await prisma.product.update({
       where: { id: parseInt(id) },
@@ -87,6 +112,10 @@ async function updateProductStock(req, res) {
 }
 
 module.exports = {
-  createProduct, getAllProducts, getProductById,
-  updateProduct, deleteProduct, updateProductStock,
+  createProduct,
+  getAllProducts,
+  getProductById,
+  updateProduct,
+  deleteProduct,
+  updateProductStock,
 };
