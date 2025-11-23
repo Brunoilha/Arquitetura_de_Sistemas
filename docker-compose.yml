@@ -1,0 +1,190 @@
+version: '3.8'
+
+services:
+  # === USERS ===
+  users-db:
+    image: postgres:15
+    container_name: users_db
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: users_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - users_db_data:/var/lib/postgresql/data
+
+  users_service:
+    build: ./user-service
+    container_name: users_service
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://admin:admin@users-db:5432/users_db?schema=public
+    ports:
+      - "3005:3005"
+    depends_on:
+      - users-db
+    command: sh -c "npx prisma generate && node src/index.js"
+  # === PRODUCTS ===
+  products-db:
+    image: postgres:15
+    container_name: products_db
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: products_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - products_db_data:/var/lib/postgresql/data
+
+  products_service:
+    build: ./products-service
+    container_name: products_service
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://admin:admin@products-db:5432/products_db?schema=public
+    ports:
+      - "3006:3006"
+    depends_on:
+      - products-db
+    command: sh -c "npx prisma generate && node src/index.js"
+
+  # === ORDERS ===
+  orders-db:
+    image: mongo:7
+    container_name: orders_db
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - orders_db_data:/data/db
+
+
+  orders_service:
+    build: ./orders-service
+    container_name: orders_service
+    restart: always
+    env_file:
+      - ./orders-service/.env
+    ports:
+      - "3002:3002"
+    depends_on:
+      - orders-db
+    command: node src/index.js
+
+  # === PAYMENTS ===
+  payments-db:
+    image: postgres:15
+    container_name: payments_db
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: payments_db
+    ports:
+      - "5437:5432"
+    volumes:
+      - payments_db_data:/var/lib/postgresql/data
+
+  payments_service:
+    build: ./payment-service
+    container_name: payments_service
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://admin:admin@payments-db:5432/payments_db?schema=public
+      RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672
+    ports:
+      - "3007:3007"
+    depends_on:
+      - payments-db
+      - rabbitmq
+      - orders_service
+      - products_service
+    command: sh -c "npx prisma generate && node src/index.js"
+
+  # === NOTIFICATION ===
+  notification_service:
+    build: ./notification-service
+    container_name: notification_service
+    restart: always
+    environment:
+      RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672
+    ports:
+      - "3008:3008"
+    depends_on:
+      - rabbitmq
+    command: node src/index.js
+
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: rabbitmq
+    restart: always
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
+
+  # === PGADMIN ===
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - users-db
+      - products-db
+      - payments-db
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9094:9094"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9094
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local-kafka-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: 'true'
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+
+# === VOLUMES ===
+volumes:
+  users_db_data:
+  products_db_data:
+  orders_db_data:
+  payments_db_data:
+  pgadmin_data:
+
