@@ -1,22 +1,19 @@
 FROM node:20
 
-# Definir diretório de trabalho
 WORKDIR /app
 
-# Copia apenas package.json e package-lock para aproveitar cache
+# Copia dependências
 COPY package*.json ./
 
-# Instala dependências
 RUN npm ci --only=production || npm install
 
-# Copia o restante do código (src, prisma, etc)
+# Copia o código
 COPY . .
 
-# Gera o Prisma Client (se aplicável)
+# Gera o Prisma Client
 RUN if [ -f prisma/schema.prisma ]; then npx prisma generate; fi
 
-# Expõe a porta usada pelo serviço
 EXPOSE 3007
 
-# Comando de inicialização
-CMD ["sh", "-c", "npx prisma generate || true && node src/index.js"]
+# Use the JS starter so migrations (or db push fallback) run at container start
+CMD ["sh", "-c", "npx prisma generate || true && node src/start.js"]

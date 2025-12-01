@@ -30,8 +30,34 @@ async function main() {
 
     const order = await post('http://localhost:3002/orders', orderPayload);
     console.log('Created order:', order);
+      // Espera o pagamento ser processado pelo payment-service
+      const orderId = order._id || order.id || order;
+      console.log('Aguardando processamento do pagamento para orderId=', orderId);
 
-    console.log('Seed finished. Watch payment-service logs to see payment processing.');
+      async function waitForPayment(orderId, attempts = 20, delayMs = 1000) {
+        for (let i = 0; i < attempts; i++) {
+          try {
+            const res = await fetch(`http://localhost:3007/payments?order_id=${orderId}`);
+            if (res.status === 200) {
+              const payment = await res.json();
+              return payment;
+            }
+          } catch (err) {
+            // ignora e tenta novamente
+          }
+          await new Promise(r => setTimeout(r, delayMs));
+        }
+        throw new Error('Timeout waiting for payment');
+      }
+
+      try {
+        const payment = await waitForPayment(orderId);
+        console.log('Pagamento criado automaticamente pelo payment-service:', payment);
+      } catch (err) {
+        console.warn('Pagamento não encontrado dentro do timeout. Cheque logs do payment-service.');
+      }
+
+      console.log('Seed finished.');
   } catch (err) {
     console.error('Seed failed:', err);
   }

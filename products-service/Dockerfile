@@ -18,5 +18,5 @@ RUN npx prisma generate
 # Porta que o serviço vai rodar
 EXPOSE 3006
 
-# Comando para rodar o serviço
-CMD ["node", "src/index.js"]
+# Comando para rodar o serviço (aplica migrations em tempo de execução)
+CMD ["node", "src/start.js"]

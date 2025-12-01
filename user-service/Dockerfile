@@ -18,5 +18,5 @@ RUN npx prisma generate
 # Expõe porta do serviço
 EXPOSE 3005
 
-# Comando padrão
-CMD ["node", "src/index.js"]
+# Comando padrão: run migrations at startup then launch app
+CMD ["node", "src/start.js"]

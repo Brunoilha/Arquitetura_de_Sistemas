@@ -37,24 +37,29 @@ async function connectMongoDB(attempt = 1) {
 await connectMongoDB();
 await initKafka();
 
-// Consumir mensagens de pagamento do Kafka
+// Consumir mensagens de pagamento do Kafka (resultado do processamento de pagamento)
 async function consumePaymentMessages() {
-  await consumer.subscribe({ topic: 'payments', fromBeginning: false });
+  // tópico padronizado para resultados de pagamento
+  await consumer.subscribe({ topic: 'payment.processed', fromBeginning: false });
   await consumer.run({
     eachMessage: async ({ topic, partition, message }) => {
       try {
         const payment = JSON.parse(message.value.toString());
-        console.log(' Pagamento recebido:', payment);
+        console.log('📥 Pagamento recebido (payment.processed):', payment);
 
         // Atualizar status do pedido baseado na resposta do pagamento
+        const newStatus = (payment.status || '').toLowerCase() === 'completed' || (payment.status || '').toLowerCase() === 'success'
+          ? 'completed'
+          : 'canceled';
+
         const order = await Order.findByIdAndUpdate(
           payment.orderId,
-          { status: payment.status === 'completed' ? 'completed' : 'canceled' },
+          { status: newStatus },
           { new: true }
         );
-        console.log(' Pedido atualizado:', order);
+        console.log('✅ Pedido atualizado:', order?._id?.toString());
       } catch (err) {
-        console.error(' Erro ao processar pagamento:', err.message);
+        console.error('❌ Erro ao processar pagamento:', err.message);
       }
     },
   });
@@ -84,17 +89,17 @@ app.post('/orders', async (req, res) => {
       paymentMethod
     });
 
-    // Enviar evento ao Kafka
+    // Enviar evento ao Kafka (order created) para que o Payments Service processe o pagamento
     await producer.send({
-      topic: 'pedidos',
+      topic: 'order.created',
       messages: [
         {
           key: order._id.toString(),
           value: JSON.stringify({
-            orderId: order._id,
+            orderId: order._id.toString(),
             userId,
             products,
-            totalValue,
+            totalAmount: totalValue,
             paymentMethod,
             status: 'pending',
             createdAt: new Date().toISOString(),

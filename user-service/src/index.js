@@ -7,9 +7,21 @@ const prisma = new PrismaClient()
 app.use(express.json())
 
 app.post('/users', async (req, res) => {
-  const { name, email } = req.body
-  const user = await prisma.user.create({ data: { name, email } })
-  res.json(user)
+  try {
+    const { name, email } = req.body
+    if (!name || !email) return res.status(400).json({ error: 'name and email are required' })
+    const user = await prisma.user.create({ data: { name, email } })
+    res.status(201).json(user)
+  } catch (err) {
+    console.error('create user error:', err && err.message ? err.message : err)
+    // Handle Prisma unique-constraint error (P2002) specifically and return 409 Conflict
+    // err.code is present on PrismaClientKnownRequestError instances
+    if (err && err.code === 'P2002') {
+      return res.status(409).json({ error: 'Email already exists' })
+    }
+    // Fallback: return safe 500
+    res.status(500).json({ error: 'Failed to create user' })
+  }
 })
 
 app.get('/users', async (_req, res) => {
